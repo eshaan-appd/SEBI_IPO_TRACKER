@@ -1,9 +1,9 @@
-
 import os
 import re
 import json
 import time
 import io
+import fitz  # PyMuPDF
 import streamlit as st
 import requests
 import pandas as pd
@@ -13,7 +13,7 @@ from datetime import datetime
 from openai import OpenAI
 
 st.set_page_config(page_title="SEBI RHP Extractor", layout="wide")
-st.title("📄 SEBI RHP Filed with RoC — Auto Extractor via OpenAI")
+st.title("📄 SEBI RHP Filed with RoC — Auto Extractor via OpenAI (Local PDF Parsing)")
 
 SEBI_RHP_URL = "https://www.sebi.gov.in/sebiweb/home/HomeAction.do?doListing=yes&sid=3&smid=11&ssid=15"
 BASE_URL = "https://www.sebi.gov.in"
@@ -69,7 +69,7 @@ def get_pdf_link(detail_url):
 
 def build_prompt(title, date_hint):
     return f'''
-You are an expert in IPO prospectus analysis. From the attached Indian IPO RHP PDF, extract the following fields:
+You are an expert in IPO prospectus analysis. From the attached Indian IPO RHP text, extract the following fields:
 
 - company_name
 - sector (e.g., Healthcare, Technology, Financials, etc.)
@@ -82,44 +82,33 @@ You are an expert in IPO prospectus analysis. From the attached Indian IPO RHP P
 - remarks (fresh issue vs offer for sale, book building etc.)
 - rhp_release_month (e.g., Aug 2024)
 
-Title: {title}
-RHP Date (approx): {date_hint}
-
-Only return valid JSON.
-'''
+Only return valid JSON that matches these fields.
+''' + f"\\n\\nTitle: {title}\\nDate Hint: {date_hint}\\n\\nText:\\n"
 
 def extract_with_openai(pdf_url, title, date_hint, client, model="gpt-4o"):
     try:
         pdf_response = requests.get(pdf_url, timeout=30)
         if pdf_response.status_code != 200:
-            return {"error": f"Failed to fetch PDF: {pdf_url}"}
-        pdf_bytes = pdf_response.content
+            return {"error": "Failed to download PDF"}
 
-        file_obj = io.BytesIO(pdf_bytes)
-        file_obj.name = "rhp.pdf"
+        with fitz.open(stream=pdf_response.content, filetype="pdf") as doc:
+            full_text = ""
+            for page in doc:
+                full_text += page.get_text()
 
-        upload = client.files.create(
-            file=file_obj,
-            purpose="assistants"
-        )
+        prompt = build_prompt(title, date_hint) + full_text[:100_000]  # truncate if too long
 
-        response = client.chat.completions.create(
+        resp = client.chat.completions.create(
             model=model,
             messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": build_prompt(title, date_hint)},
-                        {"type": "file", "file_id": upload.id}
-                    ],
-                }
+                {"role": "user", "content": prompt}
             ],
             response_format="json"
         )
-        return json.loads(response.choices[0].message.content)
+        return json.loads(resp.choices[0].message.content)
 
     except Exception as e:
-        return {"error": f"Error: {str(e)}"}
+        return {"error": f"OpenAI failed: {str(e)}"}
 
 if start_btn:
     if not openai_key:
