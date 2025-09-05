@@ -52,24 +52,17 @@ def get_pdf_link(detail_url):
     try:
         resp = requests.get(detail_url, headers=HEADERS, timeout=20)
         soup = BeautifulSoup(resp.text, "html.parser")
-
-        # First try: direct anchor tag
         for a in soup.find_all("a", href=True):
             href = a["href"].strip()
             if href.lower().endswith(".pdf"):
                 return urljoin(detail_url, href)
-
-        # Fallback: look for iframe containing PDF
         for iframe in soup.find_all("iframe", src=True):
             src = iframe["src"].strip()
             if src.lower().endswith(".pdf"):
                 return urljoin(detail_url, src)
-
     except Exception as e:
         print(f"Error in get_pdf_link: {e}")
         return None
-
-    return None
     return None
 
 def build_prompt(title, date_hint):
@@ -95,6 +88,17 @@ Only return valid JSON.
 
 def extract_with_openai(pdf_url, title, date_hint, client, model="gpt-4o"):
     try:
+        # Step 1: Download PDF content
+        pdf_response = requests.get(pdf_url, timeout=30)
+        pdf_bytes = pdf_response.content
+
+        # Step 2: Upload to OpenAI
+        upload = client.files.create(
+            file=pdf_bytes,
+            purpose="assistants"
+        )
+
+        # Step 3: Send for extraction
         response = client.chat.completions.create(
             model=model,
             messages=[
@@ -102,15 +106,16 @@ def extract_with_openai(pdf_url, title, date_hint, client, model="gpt-4o"):
                     "role": "user",
                     "content": [
                         {"type": "text", "text": build_prompt(title, date_hint)},
-                        {"type": "file", "file_url": pdf_url}
+                        {"type": "file", "file_id": upload.id}
                     ],
                 }
             ],
             response_format="json"
         )
         return json.loads(response.choices[0].message.content)
+
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"Error: {str(e)}"}
 
 # Execution
 if start_btn:
@@ -148,7 +153,7 @@ if start_btn:
             "RHP Release Month": extraction.get("rhp_release_month"),
             "PDF Link": pdf_url
         })
-        time.sleep(1.5)  # rate limiting
+        time.sleep(1.5)
 
     if output:
         df = pd.DataFrame(output)
