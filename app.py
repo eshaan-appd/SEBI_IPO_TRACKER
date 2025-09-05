@@ -1,3 +1,4 @@
+
 import os
 import re
 import json
@@ -51,11 +52,24 @@ def get_pdf_link(detail_url):
     try:
         resp = requests.get(detail_url, headers=HEADERS, timeout=20)
         soup = BeautifulSoup(resp.text, "html.parser")
+
+        # First try: direct anchor tag
         for a in soup.find_all("a", href=True):
-            if a["href"].lower().endswith(".pdf"):
-                return urljoin(detail_url, a["href"])
+            href = a["href"].strip()
+            if href.lower().endswith(".pdf"):
+                return urljoin(detail_url, href)
+
+        # Fallback: look for iframe containing PDF
+        for iframe in soup.find_all("iframe", src=True):
+            src = iframe["src"].strip()
+            if src.lower().endswith(".pdf"):
+                return urljoin(detail_url, src)
+
     except Exception as e:
+        print(f"Error in get_pdf_link: {e}")
         return None
+
+    return None
     return None
 
 def build_prompt(title, date_hint):
