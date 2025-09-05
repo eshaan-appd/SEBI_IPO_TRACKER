@@ -3,6 +3,7 @@ import os
 import re
 import json
 import time
+import io
 import streamlit as st
 import requests
 import pandas as pd
@@ -11,14 +12,12 @@ from urllib.parse import urljoin
 from datetime import datetime
 from openai import OpenAI
 
-# Config
+st.set_page_config(page_title="SEBI RHP Extractor", layout="wide")
+st.title("📄 SEBI RHP Filed with RoC — Auto Extractor via OpenAI")
+
 SEBI_RHP_URL = "https://www.sebi.gov.in/sebiweb/home/HomeAction.do?doListing=yes&sid=3&smid=11&ssid=15"
 BASE_URL = "https://www.sebi.gov.in"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
-
-# Streamlit UI
-st.set_page_config(page_title="SEBI RHP Extractor", layout="wide")
-st.title("📄 SEBI RHP Filed with RoC — Auto Extractor via OpenAI")
 
 st.sidebar.header("Settings")
 openai_key = st.sidebar.text_input("🔑 OpenAI API Key", type="password")
@@ -52,14 +51,17 @@ def get_pdf_link(detail_url):
     try:
         resp = requests.get(detail_url, headers=HEADERS, timeout=20)
         soup = BeautifulSoup(resp.text, "html.parser")
+
         for a in soup.find_all("a", href=True):
             href = a["href"].strip()
             if href.lower().endswith(".pdf"):
                 return urljoin(detail_url, href)
+
         for iframe in soup.find_all("iframe", src=True):
             src = iframe["src"].strip()
             if src.lower().endswith(".pdf"):
                 return urljoin(detail_url, src)
+
     except Exception as e:
         print(f"Error in get_pdf_link: {e}")
         return None
@@ -88,17 +90,19 @@ Only return valid JSON.
 
 def extract_with_openai(pdf_url, title, date_hint, client, model="gpt-4o"):
     try:
-        # Step 1: Download PDF content
         pdf_response = requests.get(pdf_url, timeout=30)
+        if pdf_response.status_code != 200:
+            return {"error": f"Failed to fetch PDF: {pdf_url}"}
         pdf_bytes = pdf_response.content
 
-        # Step 2: Upload to OpenAI
+        file_obj = io.BytesIO(pdf_bytes)
+        file_obj.name = "rhp.pdf"
+
         upload = client.files.create(
-            file=pdf_bytes,
+            file=file_obj,
             purpose="assistants"
         )
 
-        # Step 3: Send for extraction
         response = client.chat.completions.create(
             model=model,
             messages=[
@@ -117,7 +121,6 @@ def extract_with_openai(pdf_url, title, date_hint, client, model="gpt-4o"):
     except Exception as e:
         return {"error": f"Error: {str(e)}"}
 
-# Execution
 if start_btn:
     if not openai_key:
         st.error("Please enter your OpenAI API key.")
